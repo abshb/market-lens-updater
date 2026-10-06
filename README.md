@@ -36,14 +36,14 @@ Public/mobile distribution is currently blocked pending a verified supplier
 redistribution agreement. A free consumer app is not permission to redistribute
 Yahoo or Alpha Vantage data. Do not expose the private release or its archives.
 
-## Mobile HTTPS serving (prepared, not enabled)
+## Mobile HTTPS serving
 
 `export_mobile.py` creates `_site` containing only per-ticker daily OHLCV JSON,
 a ticker manifest, and a landing page. It does not copy the private state tree.
 
 Publication requires enabling Actions-based Pages and setting `PUBLIC_DATA_ENABLED=true`.
-This makes price histories publicly readable. Leave this variable unset until
-the owner approves publication. Dispatch with `publish_only=true` to publish
+This makes price histories publicly readable. The owner approved publication and
+Actions-based Pages and this variable are enabled. Dispatch with `publish_only=true` to publish
 the saved snapshot without new supplier requests. Subsequent successful scheduled
 refreshes publish automatically.
 
