@@ -1,0 +1,37 @@
+name: Refresh private market data
+on:
+  schedule:
+    - cron: '37 */3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: market-data-refresh
+  cancel-in-progress: false
+jobs:
+  refresh:
+    if: github.event_name == 'workflow_dispatch' || vars.REFRESH_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 175
+    env:
+      GH_TOKEN: ${{ secrets.STATE_TOKEN }}
+      STATE_REPO: abshb/market-lens-ios
+      ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+      OMP_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Restore private code and state
+        run: python worker.py restore
+      - name: Install dependencies
+        working-directory: private/backend
+        run: |
+          python -m pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r scripts/requirements-scheduled.txt
+      - name: Refresh and save private state
+        run: python worker.py refresh
