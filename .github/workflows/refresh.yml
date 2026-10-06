@@ -26,6 +26,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - name: Test failure safeguards
+        run: python -m unittest -v
       - name: Restore private code and state
         run: python worker.py restore
       - name: Install dependencies
