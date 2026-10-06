@@ -24,3 +24,14 @@ It does not provide intraday quotes or guarantee exemption from provider limits.
 
 No pull-request trigger is configured. Do not run untrusted code with these secrets.
 The mobile app's public data delivery remains a separate deployment step.
+
+## Verify saved state
+
+Manually dispatch **Verify saved private data** to restore the latest complete
+archive and validate its prices, SPY benchmark, scan date, and refresh timestamps.
+It makes no supplier requests and does not change or publish saved datasets.
+Logs contain aggregate verification counts only; source records stay private.
+
+Public/mobile distribution is currently blocked pending a verified supplier
+redistribution agreement. A free consumer app is not permission to redistribute
+Yahoo or Alpha Vantage data. Do not expose the private release or its archives.
