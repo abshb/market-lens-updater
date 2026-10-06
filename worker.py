@@ -51,6 +51,14 @@ def refresh():
     with (PRIVATE / 'refresh.log').open('w') as log:
         result = subprocess.run([sys.executable, 'scripts/scheduled_refresh.py'], cwd=PRIVATE / 'backend', stdout=log, stderr=subprocess.STDOUT)
     if result.returncode:
+        log_path = PRIVATE / 'refresh.log'
+        detail = log_path.read_text()
+        for key in ['GH_TOKEN', 'ALPHA_VANTAGE_API_KEY', 'SEC_USER_AGENT']:
+            value = os.environ.get(key)
+            if value:
+                detail = detail.replace(value, '[REDACTED]')
+        log_path.write_text(detail)
+        gh('release', 'upload', TAG, str(log_path), '--repo', REPO, '--clobber')
         raise RuntimeError('Private refresh failed; previous saved data retained. No provider output published.')
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     archive = PRIVATE / f'state-{stamp}.tar.gz'

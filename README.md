@@ -10,7 +10,7 @@ credentials, and provider logs remain private. No public data feed is published.
 ## Configuration
 
 - STATE_TOKEN: fine-grained token restricted to the private state repository with
-  Contents read/write. Rotate before expiration.
+  Contents read/write. The deployment token has no expiration; revoke if compromised.
 - ALPHA_VANTAGE_API_KEY: earnings provider credential.
 - SEC_USER_AGENT: application name and contact email for SEC requests.
 - REFRESH_ENABLED: enable only after a successful manual run.
