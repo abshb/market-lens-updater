@@ -44,6 +44,37 @@ def restore():
     print('Restored private processing code and saved data.')
 
 
+def publish_web():
+    root = PRIVATE / 'backend'
+    report = json.loads((root / 'data/scheduled_refresh.json').read_text())
+    stamp = ''.join(c for c in report['completedAt'] if c.isalnum())
+    archive = PRIVATE / f'web-state-{stamp}.tar.gz'
+    selected = [
+        'data/approved_large_mega/v1/prices/adjusted_daily.parquet',
+        'data/approved_large_mega/v1/benchmarks/spy_adjusted.parquet',
+        'data/approved_large_mega/v1/training/point_in_time_caps.parquet',
+        'data/approved_large_mega/v1/earnings/events.parquet',
+        'data/approved_large_mega/v1/earnings/raw/submissions',
+        'data/external_free/earnings_surprises/v1/earnings_surprises.parquet',
+        'data/external_free/earnings_surprises/v1/refresh_state.json',
+        'outputs/scanners/v2-latest-all-stocks/result.json',
+        'data/scheduled_refresh.json',
+    ]
+    with tarfile.open(archive, 'w:gz', compresslevel=6) as out:
+        for name in selected:
+            path = root / name
+            for item in (path.rglob('*') if path.is_dir() else [path]):
+                if item.is_file() and not item.is_symlink():
+                    out.add(item, arcname=str(item.relative_to(root)), recursive=False)
+    if any(a['name'] == archive.name and a['state'] == 'uploaded' for a in release()['assets']):
+        return
+    gh('release', 'upload', TAG, str(archive), '--repo', REPO)
+    assets = sorted([a for a in release()['assets'] if a['name'].startswith('web-state-') and a['state'] == 'uploaded'], key=lambda a: (a['created_at'], a['id']), reverse=True)
+    for old in assets[2:]:
+        gh('api', '--method', 'DELETE', f"repos/{REPO}/releases/assets/{old['id']}")
+    print('Private web dataset saved.')
+
+
 def refresh():
     sys.path.insert(0, str(PRIVATE / 'backend/scripts'))
     from cloud_refresh import pack_state
@@ -69,8 +100,9 @@ def refresh():
     states = sorted([a for a in assets if a['name'].startswith('state-') and a['name'].endswith('.tar.gz') and a['state'] == 'uploaded'], key=lambda a: (a['created_at'], a['id']), reverse=True)
     for old in states[2:]:
         gh('api', '--method', 'DELETE', f"repos/{REPO}/releases/assets/{old['id']}")
+    publish_web()
     print('Refresh succeeded; updated data saved privately.')
 
 
 if __name__ == '__main__':
-    {'restore': restore, 'refresh': refresh}[sys.argv[1]]()
+    {'restore': restore, 'refresh': refresh, 'publish-web': publish_web}[sys.argv[1]]()
