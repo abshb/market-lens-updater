@@ -19,7 +19,7 @@ class ExportTests(unittest.TestCase):
             pq.write_table(pa.Table.from_pylist([row]), prices / 'adjusted_daily.parquet')
             output = Path(directory) / 'site'
             export(root, output)
-            self.assertEqual({str(p.relative_to(output)) for p in output.rglob('*') if p.is_file()}, {'api/saved-stocks/AAPL.json', 'manifest.json', 'index.html', '.nojekyll'})
+            self.assertEqual({str(p.relative_to(output)) for p in output.rglob('*') if p.is_file()}, {'api/saved-stocks/AAPL.json', 'manifest.json', 'pattern-input.json', 'index.html', '.nojekyll'})
             payload = json.loads((output / 'api/saved-stocks/AAPL.json').read_text())
             self.assertEqual(payload['rows'][0]['time'], '2026-10-05')
             self.assertNotIn('private', payload['dataSource'])

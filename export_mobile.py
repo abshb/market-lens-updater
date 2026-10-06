@@ -40,6 +40,16 @@ def export(root: Path, destination: Path):
     for ticker, bars in sorted(tickers.items()):
         payload = {'ticker': ticker, 'rows': [bars[d] for d in sorted(bars)], 'dataSource': source}
         (output / f'{ticker}.json').write_text(json.dumps(payload, separators=(',', ':'), allow_nan=False))
+    scan_stocks = []
+    for ticker, bars in sorted(tickers.items()):
+        ordered = [bars[d] for d in sorted(bars)]
+        ema = ordered[0]['close']
+        for bar in ordered[1:]:
+            ema += (bar['close'] - ema) * (2 / 22)
+        sma = sum(bar['close'] for bar in ordered[-200:]) / 200 if len(ordered) >= 200 else None
+        scan_stocks.append({'ticker': ticker, 'ema21': ema if len(ordered) >= 21 else None, 'sma200': sma,
+                            'rows': [[bar[k] for k in ['time', 'open', 'high', 'low', 'close', 'volume']] for bar in ordered[-252:]]})
+    (destination / 'pattern-input.json').write_text(json.dumps({'dataSource': source, 'stocks': scan_stocks}, separators=(',', ':'), allow_nan=False))
     (destination / 'manifest.json').write_text(json.dumps({'dataSource': source, 'tickers': sorted(tickers)}, separators=(',', ':')))
     (destination / 'index.html').write_text('<!doctype html><title>Market Lens saved data</title><h1>Market Lens saved data</h1><p>Historical daily prices for the Market Lens app. Updates are scheduled every three hours.</p>')
     (destination / '.nojekyll').touch()
