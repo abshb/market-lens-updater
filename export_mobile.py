@@ -1,10 +1,81 @@
 """Export only chart prices for Pages; never copy the private state tree."""
 import argparse
-from datetime import datetime
+from datetime import date, datetime
 import json
 import math
 from pathlib import Path
 import re
+
+
+def finite_number(value):
+    return float(value) if value is not None and math.isfinite(float(value)) else None
+
+
+def query_earnings_dates(ticker: str, earnings_path: Path) -> list[dict[str, object]]:
+    import pyarrow.parquet as pq
+    if not earnings_path.exists():
+        return []
+    table = pq.read_table(
+        earnings_path,
+        columns=[
+            "reported_date",
+            "reported_eps",
+            "estimated_eps",
+            "surprise_percentage",
+            "report_time",
+        ],
+        filters=[("ticker", "=", ticker)],
+    )
+    events_by_date: dict[str, dict[str, object]] = {}
+    for row in table.to_pylist():
+        reported_date = row.get("reported_date")
+        date_key = (
+            reported_date.date().isoformat()
+            if isinstance(reported_date, datetime)
+            else str(reported_date)[:10]
+        )
+        events_by_date[date_key] = {
+            "date": date_key,
+            "reportedEps": finite_number(row.get("reported_eps")),
+            "estimatedEps": finite_number(row.get("estimated_eps")),
+            "surprisePercentage": finite_number(row.get("surprise_percentage")),
+            "reportTime": row.get("report_time"),
+            "estimated": False,
+            "sourceDate": None,
+        }
+    today = date.today()
+    prior_year_dates = [
+        date.fromisoformat(event_date)
+        for event_date in events_by_date
+        if date.fromisoformat(event_date).year == today.year - 1
+    ]
+    projected: list[tuple[date, date]] = []
+    for source_date in prior_year_dates:
+        try:
+            estimate = source_date.replace(year=source_date.year + 1)
+        except ValueError:
+            estimate = source_date.replace(year=source_date.year + 1, day=28)
+        if estimate <= today:
+            try:
+                estimate = estimate.replace(year=estimate.year + 1)
+            except ValueError:
+                estimate = estimate.replace(year=estimate.year + 1, day=28)
+        projected.append((estimate, source_date))
+    if projected:
+        estimate, source_date = min(projected, key=lambda item: item[0])
+        estimate_key = estimate.isoformat()
+        if estimate_key not in events_by_date:
+            events_by_date[estimate_key] = {
+                "date": estimate_key,
+                "reportedEps": None,
+                "estimatedEps": None,
+                "surprisePercentage": None,
+                "reportTime": None,
+                "estimated": True,
+                "sourceDate": source_date.isoformat(),
+            }
+    return [events_by_date[event_date] for event_date in sorted(events_by_date)]
+
 
 
 def export(root: Path, destination: Path):
@@ -38,7 +109,7 @@ def export(root: Path, destination: Path):
     output = destination / 'api/saved-stocks'
     output.mkdir(parents=True)
     for ticker, bars in sorted(tickers.items()):
-        payload = {'ticker': ticker, 'rows': [bars[d] for d in sorted(bars)], 'dataSource': source}
+        payload = {'ticker': ticker, 'rows': [bars[d] for d in sorted(bars)], 'dataSource': source, 'earnings': query_earnings_dates(ticker, root / 'data/external_free/earnings_surprises/v1/earnings_surprises.parquet')}
         (output / f'{ticker}.json').write_text(json.dumps(payload, separators=(',', ':'), allow_nan=False))
     scan_stocks = []
     for ticker, bars in sorted(tickers.items()):

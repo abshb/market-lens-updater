@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from datetime import datetime
-from export_mobile import export
+from export_mobile import export, query_earnings_dates
 
 class ExportTests(unittest.TestCase):
     def test_exports_only_prices_and_rejects_duplicates(self):
@@ -27,3 +27,17 @@ class ExportTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 export(root, Path(directory) / 'invalid')
             self.assertFalse((Path(directory) / 'invalid').exists())
+
+    def test_earnings_fields_and_missing_eps(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'earnings.parquet'
+            pq.write_table(pa.Table.from_pylist([dict(ticker='AAPL', reported_date=datetime(datetime.now().year-1,11,1), reported_eps=1.5, estimated_eps=float('nan'), surprise_percentage=2.0, report_time='post-market', private='secret')]), path)
+            events = query_earnings_dates('AAPL', path)
+            actual = next(e for e in events if not e['estimated'])
+            self.assertEqual(actual['reportedEps'], 1.5)
+            self.assertIsNone(actual['estimatedEps'])
+            self.assertNotIn('private', actual)
+            self.assertTrue(any(e['estimated'] for e in events))
+            json.dumps(events, allow_nan=False)
