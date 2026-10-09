@@ -101,6 +101,9 @@ def publish_manifest(root,manifest,index):
         save(root/path,payload)
         manifest.setdefault('indexes',{})[bucket]={'path':path,'sha256':digest}
         save(root/'index'/f'{bucket}.json',entries) # updater state, not used by mobile
+    if (root/'manifest.json').exists():
+        previous=json.loads((root/'manifest.json').read_bytes())
+        save(root/'snapshots'/f"{hashlib.sha256(encoded(previous)).hexdigest()}.json",previous)
     manifest['updatedAt']=datetime.now(timezone.utc).isoformat()
     save(root/'manifest.json',manifest)
 
@@ -123,10 +126,13 @@ def bootstrap(raw,root,provider,calendar,context_root=None):
     splits=split_map(provider.splits(first,last))
     db=duckdb.connect(str(root.parent/'massive-bootstrap.duckdb'))
     db.execute("SET threads=4")
+    db.execute("SET TimeZone='UTC'")
     files=[str(raw/'raw'/item['date'][:4]/Path(item['key']).name) for item in inventory]
-    db.execute('CREATE OR REPLACE TABLE candles AS SELECT *, strftime(to_timestamp(window_start/1000000000),\'%Y-%m-%d\') AS day FROM read_csv(?,header=true,union_by_name=true)',[files])
+    db.execute('CREATE OR REPLACE TABLE candles AS SELECT *, strftime(to_timestamp(window_start/1000000000),\'%Y-%m-%d\') AS day FROM read_csv(?,header=true,union_by_name=true,filename=true)',[files])
+    mismatched=db.execute("SELECT count(*) FROM candles WHERE day != substr(regexp_extract(filename, '[^/]+$'),1,10)").fetchone()[0]
+    db.execute("DELETE FROM candles WHERE day != substr(regexp_extract(filename, '[^/]+$'),1,10)")
     tickers=[r[0] for r in db.execute('SELECT DISTINCT ticker FROM candles ORDER BY ticker').fetchall()]
-    index=indexes(root); count=0; invalid_count=0; unsupported=[]
+    index=indexes(root); count=0; invalid_count=mismatched; unsupported=[]
     db.execute('CREATE INDEX IF NOT EXISTS ticker_index ON candles(ticker)')
     for i,ticker in enumerate(tickers):
         if not TICKER.fullmatch(ticker):unsupported.append(ticker);continue
@@ -196,7 +202,7 @@ def refresh_daily(root,provider,now):
     return manifest['lastRefresh']
 
 
-def build_pattern_input(root):
+def build_pattern_input(root, approved_tickers=None):
     manifest=json.loads((root/'manifest.json').read_bytes());index=indexes(root);stocks=[]
     for ticker in manifest['tickers']:
         entry=index[shard(ticker)][ticker]
@@ -215,6 +221,11 @@ def build_pattern_input(root):
     source={'provider':'github','updatedAt':manifest['updatedAt'],'session':manifest['session']}
     chunks=[immutable(root,'metadata',f'pattern-{i//250}',{'stocks':stocks[i:i+250]}) for i in range(0,len(stocks),250)]
     manifest['patternInput']=immutable(root,'metadata','pattern-input',{'dataSource':source,'total':len(stocks),'shards':chunks})
+    if approved_tickers is not None:
+        approved=set(approved_tickers)
+        selected=[s for s in stocks if s['ticker'] in approved]
+        shards=[immutable(root,'metadata',f'pattern-approved-{i//250}',{'stocks':selected[i:i+250]}) for i in range(0,len(selected),250)]
+        manifest['patternInputApproved']=immutable(root,'metadata','pattern-approved-input',{'dataSource':source,'total':len(selected),'tickers':[s['ticker'] for s in selected],'shards':shards})
     save(root/'manifest.json',manifest)
     print(f'Pattern input: {len(stocks)} stocks',flush=True)
 
@@ -236,6 +247,65 @@ def restore_earnings(root,snapshot):
         manifest['earningsSnapshotAsOf']=snapshot['asOfDate']
         publish_manifest(root,manifest,index)
     return {'earningsStocksUpdated':changed}
+
+
+def repair_history_dates(root, corrections):
+    if corrections.get('schema')!=1:raise ValueError('Unsupported history repair schema')
+    index=indexes(root);manifest=json.loads((root/'manifest.json').read_bytes());changes=[]
+    for ticker,fix in corrections['stocks'].items():
+        entry=index.get(shard(ticker),{}).get(ticker)
+        if not entry:continue
+        rejected=fix['rejected'];authoritative=fix['authoritative']
+        if any(not valid(row) for row in rejected+authoritative):raise ValueError('Invalid repair candle')
+        dates={row[0] for row in rejected}
+        base=unpacked(root/entry['base']['path'])
+        rows=[r for r in base['rows'] if r[0] not in dates]+authoritative
+        rows.sort(key=lambda r:r[0])
+        if len({r[0] for r in rows})!=len(rows):raise ValueError('Repair still contains duplicate dates')
+        if rows==base['rows']:continue
+        entry['base']=immutable(root,'history',ticker,{'ticker':ticker,'rows':rows})
+        entry['revision']=hashlib.sha256(encoded({k:entry[k] for k in ['base','delta','splits','metadata'] if k in entry})).hexdigest()
+        changes.append({'ticker':ticker,'before':len(base['rows']),'after':len(rows),'repairedDates':sorted(dates)})
+    if changes:
+        save(root/'rejections'/'history-date-repair.json',{'sourceFile':corrections['sourceFile'],'changes':changes})
+        publish_manifest(root,manifest,index)
+    return {'historyRepairs':len(changes)}
+
+
+def snapshot_references(root,manifest):
+    references={'manifest.json'}
+    for pointer in manifest.get('indexes',{}).values():
+        references.add(pointer['path'])
+        for entry in json.loads((root/pointer['path']).read_bytes())['stocks'].values():
+            references.update(entry[k]['path'] for k in ('base','delta','metadata') if entry.get(k))
+    for key in ('patternInput','patternInputApproved'):
+        if manifest.get(key):
+            pointer=manifest[key];references.add(pointer['path'])
+            references.update(p['path'] for p in unpacked(root/pointer['path'])['shards'])
+    return references
+
+
+def prune_cache(root,now,retention_days=7):
+    # Persist first-observed times: fresh Git checkouts reset filesystem mtimes.
+    cutoff=now-timedelta(days=retention_days)
+    referenced=snapshot_references(root,json.loads((root/'manifest.json').read_bytes()))
+    for path in (root/'snapshots').glob('*.json'):
+        snapshot=json.loads(path.read_bytes())
+        if datetime.fromisoformat(snapshot['updatedAt'])>=cutoff:referenced.update(snapshot_references(root,snapshot))
+        else:path.unlink()
+    ledger_path=root/'retention.json'
+    old=json.loads(ledger_path.read_bytes()).get('unreferencedSince',{}) if ledger_path.exists() else {}
+    ledger={};removed=0;removed_bytes=0
+    for kind in ('history','deltas','metadata','indexes'):
+        for path in (root/kind).rglob('*.json'):
+            relative=path.relative_to(root).as_posix()
+            if relative in referenced:continue
+            since=old.get(relative,now.isoformat())
+            if datetime.fromisoformat(since)<cutoff:
+                removed_bytes+=path.stat().st_size;path.unlink();removed+=1
+            else:ledger[relative]=since
+    save(ledger_path,{'retentionDays':retention_days,'unreferencedSince':ledger})
+    return {'supersededFilesRemoved':removed,'removedBytes':removed_bytes,'waitingForGracePeriod':len(ledger)}
 
 
 def refresh_live(root,provider,allowlist,now):
@@ -260,7 +330,7 @@ def refresh_live(root,provider,allowlist,now):
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('mode',choices=['bootstrap','refresh']);p.add_argument('--cache',required=True);p.add_argument('--raw');p.add_argument('--context');p.add_argument('--calendar',required=True);p.add_argument('--allowlist',required=True);p.add_argument('--env-file');p.add_argument('--force-daily',action='store_true');p.add_argument('--earnings');args=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('mode',choices=['bootstrap','refresh']);p.add_argument('--cache',required=True);p.add_argument('--raw');p.add_argument('--context');p.add_argument('--calendar',required=True);p.add_argument('--allowlist',required=True);p.add_argument('--env-file');p.add_argument('--force-daily',action='store_true');p.add_argument('--earnings');p.add_argument('--history-repairs');p.add_argument('--pattern-tickers');p.add_argument('--maintenance',action='store_true');args=p.parse_args()
     if args.env_file:
         for line in Path(args.env_file).read_text().splitlines():
             if '=' in line and not line.startswith('#'):k,v=line.split('=',1);os.environ[k]=v
@@ -269,10 +339,20 @@ def main():
     if args.mode=='bootstrap':bootstrap(Path(args.raw),root,provider,calendar,Path(args.context) if args.context else None)
     else:
         manifest=json.loads((root/'manifest.json').read_bytes())
+        changed=False
+        if args.history_repairs:
+            result=repair_history_dates(root,json.loads(Path(args.history_repairs).read_bytes()));changed=bool(result['historyRepairs']);print(json.dumps(result),flush=True)
+            manifest=json.loads((root/'manifest.json').read_bytes())
         latest=max(day for day,close in calendar if close/1000<=now.timestamp()-1800)
-        if args.force_daily or latest>manifest['session'] or manifest.get('lastDailyCheck')!=now.date().isoformat():print(json.dumps(refresh_daily(root,provider,now)),flush=True);build_pattern_input(root)
+        if args.force_daily or latest>manifest['session'] or manifest.get('lastDailyCheck')!=now.date().isoformat():print(json.dumps(refresh_daily(root,provider,now)),flush=True);changed=True
+        if args.pattern_tickers and (changed or not manifest.get('patternInputApproved')):build_pattern_input(root,json.loads(Path(args.pattern_tickers).read_bytes()))
+        elif changed:build_pattern_input(root)
         if args.earnings:print(json.dumps(restore_earnings(root,json.loads(Path(args.earnings).read_bytes()))),flush=True)
         print(json.dumps(refresh_live(root,provider,json.loads(Path(args.allowlist).read_bytes()),now)),flush=True)
+        if args.maintenance:print(json.dumps(prune_cache(root,now)),flush=True)
+        current=json.loads((root/'manifest.json').read_bytes())
+        if current['session']!=latest:raise ValueError('Publication is behind the latest completed session')
+        save(root/'health.json',{'checkedAt':now.isoformat(),'expectedSession':latest,'publishedSession':current['session'],'status':'current'})
 
 
 if __name__=='__main__':main()

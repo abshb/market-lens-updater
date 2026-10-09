@@ -60,6 +60,42 @@ class Tests(unittest.TestCase):
         entry=c.indexes(self.root)[c.shard('T1')]['T1'];payload=c.unpacked(self.root/entry['metadata']['path'])
         self.assertEqual(entry['base'],base);self.assertEqual(payload['modelContext'],context);self.assertEqual(payload['earnings'],[event])
         self.assertEqual(c.restore_earnings(self.root,snapshot)['earningsStocksUpdated'],0)
+    def test_date_repair_uses_authoritative_row_and_is_idempotent(self):
+        idx=c.indexes(self.root);entry=idx[c.shard('T1')]['T1']
+        good=['2026-10-07',10,11,9,10,100];bad=['2026-10-07',11,12,10,11,100]
+        entry['base']=c.immutable(self.root,'history','T1',{'ticker':'T1','rows':[bad,good]})
+        c.publish_manifest(self.root,json.loads((self.root/'manifest.json').read_bytes()),idx)
+        repair={'schema':1,'sourceFile':'wrong-date.csv.gz','stocks':{'T1':{'rejected':[bad],'authoritative':[good]}}}
+        self.assertEqual(c.repair_history_dates(self.root,repair)['historyRepairs'],1)
+        entry=c.indexes(self.root)[c.shard('T1')]['T1']
+        self.assertEqual(c.unpacked(self.root/entry['base']['path'])['rows'],[good])
+        self.assertEqual(c.repair_history_dates(self.root,repair)['historyRepairs'],0)
+    def test_retention_protects_current_objects_and_uses_persisted_age(self):
+        base=c.indexes(self.root)[c.shard('T1')]['T1']['base']
+        obsolete=c.immutable(self.root,'metadata','orphan',{'unused':True});path=self.root/obsolete['path']
+        c.prune_cache(self.root,NOW);self.assertTrue(path.exists())
+        import os;os.utime(path,None)
+        c.prune_cache(self.root,NOW+c.timedelta(days=8))
+        self.assertFalse(path.exists());self.assertTrue((self.root/base['path']).exists())
+    def test_approved_patterns_exclude_unrequested_history(self):
+        c.build_pattern_input(self.root,['T1'])
+        m=json.loads((self.root/'manifest.json').read_bytes());p=c.unpacked(self.root/m['patternInputApproved']['path'])
+        self.assertEqual(p['tickers'],['T1']);self.assertEqual(p['total'],1)
+        self.assertEqual(c.unpacked(self.root/p['shards'][0]['path'])['stocks'][0]['ticker'],'T1')
+    def test_bootstrap_rejects_timestamp_filename_mismatch(self):
+        import csv,gzip
+        raw=self.root/'raw-input';raw.mkdir();folder=raw/'raw'/'2026';folder.mkdir(parents=True)
+        file=folder/'2026-10-07.csv.gz'
+        with gzip.open(file,'wt',newline='') as stream:
+            writer=csv.writer(stream);writer.writerow(['ticker','volume','open','close','high','low','window_start','transactions'])
+            for day in ['2026-10-07','2026-10-08']:
+                writer.writerow(['TEST',100,10,10,11,9,int(datetime.fromisoformat(day+'T04:00:00+00:00').timestamp()*1e9),1])
+        (raw/'inventory.json').write_text(json.dumps([{'date':'2026-10-07','key':file.name}]))
+        target=self.root/'bootstrap';target.mkdir()
+        c.bootstrap(raw,target,Fake(),[['2026-10-07',NOW.timestamp()*1000]])
+        entry=c.indexes(target)[c.shard('TEST')]['TEST']
+        self.assertEqual(c.unpacked(target/entry['base']['path'])['rows'],[['2026-10-07',10.,11.,9.,10.,100.]])
+        self.assertEqual(json.loads((target/'manifest.json').read_bytes())['invalidRowsSkipped'],1)
     def test_invalid_rows(self):
         for row in [[],None,['2026-10-08',0,12,10,11,100],['2026-10-08',11,9,10,11,100],['2026-10-08',11,12,10,11,-1]]:self.assertFalse(c.valid(row))
 if __name__=='__main__':unittest.main()

@@ -1,7 +1,9 @@
 name: Refresh Massive GitHub cache
 on:
   schedule:
-    - cron: '17,47 * * * *'
+    - cron: '7,37 * * * *'
+    # Independent closing-session catch-up attempts, after the settlement buffer.
+    - cron: '43 20,21,22,23 * * 1-5'
   workflow_dispatch:
     inputs:
       force_daily:
@@ -24,6 +26,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - name: Install acquisition test dependency
+        run: python -m pip install duckdb==1.5.6
       - name: Test incremental update safeguards
         run: python -m unittest -v test_massive_cache
       - uses: actions/checkout@v6
@@ -38,7 +42,11 @@ jobs:
         run: |
           args=()
           if [ "$FORCE_DAILY" = 'true' ]; then args+=(--force-daily); fi
-          python massive_cache.py refresh --cache cache --calendar market-sessions.json --allowlist live-stocks.json --earnings earnings-snapshot.json "${args[@]}"
+          for attempt in 1 2 3; do
+            if python massive_cache.py refresh --cache cache --calendar market-sessions.json --allowlist live-stocks.json --earnings earnings-snapshot.json --history-repairs history-date-repairs.json --pattern-tickers pattern-tickers.json --maintenance "${args[@]}"; then break; fi
+            if [ "$attempt" = 3 ]; then exit 1; fi
+            sleep $((attempt * 15))
+          done
       - name: Publish changed cache files atomically
         working-directory: cache
         env:
@@ -54,3 +62,12 @@ jobs:
           git commit -m 'Append Massive stock cache updates'
           gh auth setup-git
           git push origin HEAD:codex/massive-stock-cache-v1
+      - name: Report publication freshness
+        if: always()
+        run: |
+          printf "Workflow result: %s\n\n" "${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f cache/health.json ]; then
+            printf '### Publication freshness\n\n```json\n' >> "$GITHUB_STEP_SUMMARY"
+            cat cache/health.json >> "$GITHUB_STEP_SUMMARY"
+            printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -13,3 +13,13 @@ Mobile caches the catalog, immutable objects, and merged split-adjusted historie
 Invalid rows are quarantined by symbol/date and do not block valid peers. Incomplete whole-market responses fail before publishing; old valid rows remain. Missing provider bars are never invented. New symbols without flat-file history are marked `historyBackfillNeeded` and cannot supply a full model history yet.
 
 Run safeguards: `python -m unittest -v test_massive_cache`.
+
+## Acquisition repair and retention
+
+The updater rejects timestamps whose UTC date differs from their source daily filename. The versioned history repair restores authoritative original-session rows for the 29 known mismatches without modifying downloaded raw files. Repairs are idempotent.
+
+The mobile-approved pattern snapshot has the same price rows and moving averages as the full snapshot, restricted to `pattern-tickers.json`. Existing clients keep the full snapshot; updated clients use the compact snapshot. Detectors are unchanged.
+
+Current objects and snapshots from the preceding seven days are protected. Unreferenced objects are removed only after a persisted seven-day grace period; fresh checkout mtimes do not reset this clock. Git history retains prior publications.
+
+Refresh runs have bounded retries, additional closing-session catch-up attempts, and a saved `health.json` freshness report. A delayed GitHub schedule remains possible; a scheduled interval is not a delivery guarantee. Intraday eligibility remains empty.
