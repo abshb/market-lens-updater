@@ -51,6 +51,15 @@ class Tests(unittest.TestCase):
     def test_packed_header_is_portable(self):
         import base64
         self.assertEqual(base64.b64decode(c.packed({'rows':[]})['data'])[9],255)
+    def test_earnings_restoration_preserves_prices_and_model_context(self):
+        idx=c.indexes(self.root);entry=idx[c.shard('T1')]['T1'];base=entry['base'];context={'schema':1,'sector':'Health Care'}
+        entry['metadata']=c.immutable(self.root,'metadata','T1',{'earnings':[],'modelContext':context});c.publish_manifest(self.root,json.loads((self.root/'manifest.json').read_bytes()),idx)
+        event={'date':'2026-10-01','reportedEps':1.2,'estimated':False}
+        snapshot={'asOfDate':'2026-10-06','stocks':{'T1':[event]}}
+        self.assertEqual(c.restore_earnings(self.root,snapshot)['earningsStocksUpdated'],1)
+        entry=c.indexes(self.root)[c.shard('T1')]['T1'];payload=c.unpacked(self.root/entry['metadata']['path'])
+        self.assertEqual(entry['base'],base);self.assertEqual(payload['modelContext'],context);self.assertEqual(payload['earnings'],[event])
+        self.assertEqual(c.restore_earnings(self.root,snapshot)['earningsStocksUpdated'],0)
     def test_invalid_rows(self):
         for row in [[],None,['2026-10-08',0,12,10,11,100],['2026-10-08',11,9,10,11,100],['2026-10-08',11,12,10,11,-1]]:self.assertFalse(c.valid(row))
 if __name__=='__main__':unittest.main()

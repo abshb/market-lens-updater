@@ -183,7 +183,9 @@ def refresh_daily(root,provider,now):
             pointer=immutable(root,'deltas',ticker,{'ticker':ticker,'rows':updates})
             prior_splits=[s for s in entry.get('splits',[]) if s['date']<days[0]]
             current_splits=prior_splits+events.get(ticker,[])
-            revision=hashlib.sha256(encoded({'base':entry['base'],'delta':pointer,'splits':current_splits})).hexdigest()
+            revision_fields={'base':entry['base'],'delta':pointer,'splits':current_splits}
+            if entry.get('metadata'):revision_fields['metadata']=entry['metadata']
+            revision=hashlib.sha256(encoded(revision_fields)).hexdigest()
             if entry['revision']!=revision:changed.add(ticker)
             entry.update(delta=pointer,splits=current_splits,revision=revision,lastDate=max(day,entry['lastDate']))
     manifest['session']=target;manifest['tickers']=sorted(downloaded[-1][1]);manifest['historyTickerCount']=sum(map(len,index.values()))
@@ -217,6 +219,25 @@ def build_pattern_input(root):
     print(f'Pattern input: {len(stocks)} stocks',flush=True)
 
 
+def restore_earnings(root,snapshot):
+    manifest=json.loads((root/'manifest.json').read_bytes());index=indexes(root);changed=0
+    for ticker,events in snapshot['stocks'].items():
+        entry=index.get(shard(ticker),{}).get(ticker)
+        if entry is None:continue
+        if not isinstance(events,list) or any(not isinstance(e,dict) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}',e.get('date','')) for e in events):raise ValueError('Invalid earnings snapshot')
+        old=unpacked(root/entry['metadata']['path']) if entry.get('metadata') else {}
+        if old.get('earnings')==events:continue
+        old['earnings']=events
+        entry['metadata']=immutable(root,'metadata',ticker,old)
+        # Metadata corrections must invalidate the phone's merged stock cache too.
+        entry['revision']=hashlib.sha256(encoded({k:entry[k] for k in ['base','delta','splits','metadata'] if k in entry})).hexdigest()
+        changed+=1
+    if changed:
+        manifest['earningsSnapshotAsOf']=snapshot['asOfDate']
+        publish_manifest(root,manifest,index)
+    return {'earningsStocksUpdated':changed}
+
+
 def refresh_live(root,provider,allowlist,now):
     if not isinstance(allowlist,list) or len(allowlist)>100 or any(not isinstance(t,str) or not TICKER.fullmatch(t) for t in allowlist):raise ValueError('Invalid live stock allowlist')
     current=json.loads((root/'manifest.json').read_bytes())
@@ -239,7 +260,7 @@ def refresh_live(root,provider,allowlist,now):
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('mode',choices=['bootstrap','refresh']);p.add_argument('--cache',required=True);p.add_argument('--raw');p.add_argument('--context');p.add_argument('--calendar',required=True);p.add_argument('--allowlist',required=True);p.add_argument('--env-file');p.add_argument('--force-daily',action='store_true');args=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('mode',choices=['bootstrap','refresh']);p.add_argument('--cache',required=True);p.add_argument('--raw');p.add_argument('--context');p.add_argument('--calendar',required=True);p.add_argument('--allowlist',required=True);p.add_argument('--env-file');p.add_argument('--force-daily',action='store_true');p.add_argument('--earnings');args=p.parse_args()
     if args.env_file:
         for line in Path(args.env_file).read_text().splitlines():
             if '=' in line and not line.startswith('#'):k,v=line.split('=',1);os.environ[k]=v
@@ -250,6 +271,7 @@ def main():
         manifest=json.loads((root/'manifest.json').read_bytes())
         latest=max(day for day,close in calendar if close/1000<=now.timestamp()-1800)
         if args.force_daily or latest>manifest['session'] or manifest.get('lastDailyCheck')!=now.date().isoformat():print(json.dumps(refresh_daily(root,provider,now)),flush=True);build_pattern_input(root)
+        if args.earnings:print(json.dumps(restore_earnings(root,json.loads(Path(args.earnings).read_bytes()))),flush=True)
         print(json.dumps(refresh_live(root,provider,json.loads(Path(args.allowlist).read_bytes()),now)),flush=True)
 
 

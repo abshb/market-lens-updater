@@ -38,7 +38,7 @@ jobs:
         run: |
           args=()
           if [ "$FORCE_DAILY" = 'true' ]; then args+=(--force-daily); fi
-          python massive_cache.py refresh --cache cache --calendar market-sessions.json --allowlist live-stocks.json "${args[@]}"
+          python massive_cache.py refresh --cache cache --calendar market-sessions.json --allowlist live-stocks.json --earnings earnings-snapshot.json "${args[@]}"
       - name: Publish changed cache files atomically
         working-directory: cache
         env:
