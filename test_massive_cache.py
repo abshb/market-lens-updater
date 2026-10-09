@@ -43,6 +43,11 @@ class Tests(unittest.TestCase):
         self.assertEqual((self.root/'manifest.json').read_bytes(),old)
     def test_no_allowlist_no_provider_calls(self):
         f=Fake();self.assertEqual(c.refresh_live(self.root,f,[],NOW)['providerRequests'],0)
+    def test_provider_quarantines_bad_prices_and_wrong_dates(self):
+        p=c.Provider('fixture');bar={'T':'BRK.B','o':11,'h':12,'l':10,'c':11,'v':100,'t':datetime(2026,10,8,20,tzinfo=timezone.utc).timestamp()*1000}
+        p.get=lambda *a,**k:{'adjusted':False,'results':[bar,{**bar,'T':'BadpA','c':0},{**bar,'T':'WRONG','t':1e100},{**bar,'T':None}]}
+        rows,rejections=p.day('2026-10-08')
+        self.assertEqual(list(rows),['BRK.B']);self.assertEqual(len(rejections),3)
     def test_invalid_rows(self):
         for row in [[],None,['2026-10-08',0,12,10,11,100],['2026-10-08',11,9,10,11,100],['2026-10-08',11,12,10,11,-1]]:self.assertFalse(c.valid(row))
 if __name__=='__main__':unittest.main()

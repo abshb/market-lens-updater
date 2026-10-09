@@ -79,7 +79,10 @@ class Provider:
         result={}; invalid=[]
         for bar in data.get('results',[]):
             ticker=bar.get('T',''); row=[day,bar.get('o'),bar.get('h'),bar.get('l'),bar.get('c'),bar.get('v')]
-            if TICKER.fullmatch(ticker) and valid(row): result[ticker]=row
+            timestamp=bar.get('t')
+            try:dated=isinstance(timestamp,(int,float)) and math.isfinite(timestamp) and datetime.fromtimestamp(timestamp/1000,timezone.utc).date().isoformat()==day
+            except (ValueError,OverflowError,OSError):dated=False
+            if isinstance(ticker,str) and TICKER.fullmatch(ticker) and valid(row) and dated: result[ticker]=row
             else: invalid.append({'ticker':ticker,'date':day,'reason':'Invalid symbol or OHLCV'})
         return result,invalid
 
@@ -105,7 +108,7 @@ def split_map(events):
     for event in events:
         ticker=event.get('ticker','');day=event.get('execution_date','')
         a,b=event.get('split_from'),event.get('split_to')
-        if TICKER.fullmatch(ticker) and isinstance(a,(int,float)) and isinstance(b,(int,float)) and a>0 and b>0 and re.fullmatch(r'\d{4}-\d{2}-\d{2}',day):
+        if isinstance(ticker,str) and TICKER.fullmatch(ticker) and isinstance(a,(int,float)) and isinstance(b,(int,float)) and a>0 and b>0 and re.fullmatch(r'\d{4}-\d{2}-\d{2}',day):
             result[ticker].append({'date':day,'factor':a/b})
     return result
 
