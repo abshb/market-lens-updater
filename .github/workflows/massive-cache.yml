@@ -1,0 +1,47 @@
+name: Refresh Massive GitHub cache
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: massive-cache-refresh
+  cancel-in-progress: false
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Test incremental update safeguards
+        run: python -m unittest -v test_massive_cache
+      - uses: actions/checkout@v6
+        with:
+          ref: codex/massive-stock-cache-v1
+          path: cache
+          persist-credentials: false
+      - name: Append daily candles and refresh opted-in stocks
+        env:
+          MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
+        run: python massive_cache.py refresh --cache cache --calendar market-sessions.json --allowlist live-stocks.json
+      - name: Publish changed cache files atomically
+        working-directory: cache
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .
+          if git diff --cached --quiet; then
+            echo 'Cache already current; nothing to publish.'
+            exit 0
+          fi
+          git commit -m 'Append Massive stock cache updates'
+          gh auth setup-git
+          git push origin HEAD:codex/massive-stock-cache-v1
