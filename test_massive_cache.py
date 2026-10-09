@@ -48,6 +48,9 @@ class Tests(unittest.TestCase):
         p.get=lambda *a,**k:{'adjusted':False,'results':[bar,{**bar,'T':'BadpA','c':0},{**bar,'T':'WRONG','t':1e100},{**bar,'T':None}]}
         rows,rejections=p.day('2026-10-08')
         self.assertEqual(list(rows),['BRK.B']);self.assertEqual(len(rejections),3)
+    def test_packed_header_is_portable(self):
+        import base64
+        self.assertEqual(base64.b64decode(c.packed({'rows':[]})['data'])[9],255)
     def test_invalid_rows(self):
         for row in [[],None,['2026-10-08',0,12,10,11,100],['2026-10-08',11,9,10,11,100],['2026-10-08',11,12,10,11,-1]]:self.assertFalse(c.valid(row))
 if __name__=='__main__':unittest.main()

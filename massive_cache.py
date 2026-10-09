@@ -27,7 +27,9 @@ def save(path, value):
 
 
 def packed(value):
-    return {'encoding':'gzip-base64-v1','data':base64.b64encode(gzip.compress(encoded(value),mtime=0)).decode()}
+    compressed=bytearray(gzip.compress(encoded(value),mtime=0))
+    compressed[9]=255 # Stable gzip header on macOS, Linux, and Python versions.
+    return {'encoding':'gzip-base64-v1','data':base64.b64encode(compressed).decode()}
 
 
 def unpacked(path):
