@@ -3,6 +3,11 @@ on:
   schedule:
     - cron: '17,47 * * * *'
   workflow_dispatch:
+    inputs:
+      force_daily:
+        description: Recheck the correction window even when current
+        type: boolean
+        default: false
 permissions:
   contents: write
 concurrency:
@@ -29,7 +34,11 @@ jobs:
       - name: Append daily candles and refresh opted-in stocks
         env:
           MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
-        run: python massive_cache.py refresh --cache cache --calendar market-sessions.json --allowlist live-stocks.json
+          FORCE_DAILY: ${{ inputs.force_daily }}
+        run: |
+          args=()
+          if [ "$FORCE_DAILY" = 'true' ]; then args+=(--force-daily); fi
+          python massive_cache.py refresh --cache cache --calendar market-sessions.json --allowlist live-stocks.json "${args[@]}"
       - name: Publish changed cache files atomically
         working-directory: cache
         env:
