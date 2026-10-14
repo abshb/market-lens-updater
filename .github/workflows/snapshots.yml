@@ -1,0 +1,48 @@
+name: Publish approved-stock delayed snapshots
+on:
+  schedule:
+    - cron: '2,17,32,47 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: approved-stock-snapshots
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Test snapshot safeguards
+        run: python -m unittest -v test_snapshot_feed
+      - uses: actions/checkout@v6
+        with:
+          ref: codex/market-snapshots-v1
+          path: snapshots
+          persist-credentials: false
+      - name: Fetch approved stocks including extended hours
+        env:
+          MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          args=()
+          if [ "$MANUAL" = 'true' ]; then args+=(--force); fi
+          python snapshot_feed.py --output snapshots/latest.json "${args[@]}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish snapshot atomically
+        working-directory: snapshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add latest.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Refresh approved-stock delayed snapshot'
+          gh auth setup-git
+          git push origin HEAD:codex/market-snapshots-v1

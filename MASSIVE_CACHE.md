@@ -23,3 +23,13 @@ The mobile-approved pattern snapshot has the same price rows and moving averages
 Current objects and snapshots from the preceding seven days are protected. Unreferenced objects are removed only after a persisted seven-day grace period; fresh checkout mtimes do not reset this clock. Git history retains prior publications.
 
 Refresh runs have bounded retries, additional closing-session catch-up attempts, and a saved `health.json` freshness report. A delayed GitHub schedule remains possible; a scheduled interval is not a delivery guarantee. Intraday eligibility remains empty.
+
+## Approved-stock delayed snapshots
+
+A separate `snapshots.yml` workflow requests only the 803 symbols in `pattern-tickers.json`, in batches of at most 100, and publishes `latest.json` atomically on `codex/market-snapshots-v1`. It does not modify the completed daily cache, scanner inputs, or daily acquisition workflow. The existing GitHub `MASSIVE_API_KEY` secret is reused.
+
+Scheduled checks are every 15 minutes, offset from the top of the hour. The saved exchange calendar and America/New_York timezone gate acquisition to trading days from 04:15 through 20:45 ET, allowing for the provider's 15-minute delay and final extended-hours prints. Manual dispatch can fetch outside that window. GitHub schedules are best-effort and can be delayed or skipped; this is not a real-time feed. No local machine or local scheduler is required.
+
+Each observation retains its provider timestamp and is classified pre-market, regular, post-market, or closed using that timestamp and the exchange close (including early closes). Missing tickers are explicit nulls, never fabricated prices; malformed/empty/failed batches do not overwrite the previous publication. A snapshot is latest state, not an intraday candle history. The normalized day/minute fields are provider data; no OHLC is synthesized. The mobile quote uses the observation independently of completed daily strategy/model inputs and labels delayed/stale data. The branch retains publication audit history through Git commits.
+
+Validation: `python -m unittest -v test_snapshot_feed`. Initial deployment is verified by a manual GitHub Actions run and read-back of the public data file.
