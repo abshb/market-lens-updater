@@ -1,0 +1,18 @@
+{
+  "name": "market-lens-snapshot-scheduler",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-15",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "triggers": {
+    "crons": [
+      "2,17,32,47 * * * *"
+    ]
+  },
+  "observability": {
+    "enabled": true
+  }
+}
