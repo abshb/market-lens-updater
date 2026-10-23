@@ -100,8 +100,8 @@ class Tests(unittest.TestCase):
         for row in [[],None,['2026-10-08',0,12,10,11,100],['2026-10-08',11,9,10,11,100],['2026-10-08',11,12,10,11,-1]]:self.assertFalse(c.valid(row))
     def test_v7_2_weekly_publication_and_retention(self):
         from datetime import date,timedelta
-        days=[];d=date(2025,9,1)
-        while len(days)<252:
+        days=[];d=date(2025,7,1)
+        while len(days)<280:
             if d.weekday()<5:days.append(d.isoformat())
             d+=timedelta(days=1)
         idx={};tickers=['SPY','XLK','NUE','DK']
@@ -116,6 +116,9 @@ class Tests(unittest.TestCase):
         self.assertIn('v7_2Weekly',m)
         payload=c.unpacked(self.root/m['v7_2Weekly']['path'])
         self.assertEqual(payload['schema'],1);self.assertEqual(payload['latestBundleDate'],days[-1]);self.assertEqual(payload['stopLossPct'],12.0)
+        self.assertGreaterEqual(len(payload['weeks']),5)
+        self.assertEqual(payload['weeks'][0]['asOfDate'],payload['asOfDate'])
+        self.assertGreater(payload['weeks'][0]['asOfDate'],payload['weeks'][1]['asOfDate'])
         c.prune_cache(self.root,NOW+c.timedelta(days=10))
         self.assertTrue((self.root/m['v7_2Weekly']['path']).exists())
 if __name__=='__main__':unittest.main()

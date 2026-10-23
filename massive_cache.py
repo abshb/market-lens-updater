@@ -204,7 +204,7 @@ def refresh_daily(root,provider,now):
 
 
 def build_pattern_input(root, approved_tickers=None):
-    manifest=json.loads((root/'manifest.json').read_bytes());index=indexes(root);stocks=[]
+    manifest=json.loads((root/'manifest.json').read_bytes());index=indexes(root);stocks=[];v7_histories={}
     for ticker in manifest['tickers']:
         entry=index[shard(ticker)][ticker]
         rows=unpacked(root/entry['base']['path'])['rows']
@@ -216,6 +216,7 @@ def build_pattern_input(root, approved_tickers=None):
             factor=math.prod(e['factor'] for e in entry['splits'] if day<e['date']<=manifest['session'])
             adjusted.append([day,o*factor,h*factor,l*factor,c*factor,v/factor])
         if not adjusted:continue
+        v7_histories[ticker]=adjusted[-530:]
         ema=adjusted[0][4]
         for row in adjusted[1:]:ema+=(row[4]-ema)*(2/22)
         stocks.append({'ticker':ticker,'rows':adjusted[-252:],'ema21':ema if len(adjusted)>=21 else None,'sma200':sum(r[4] for r in adjusted[-200:])/200 if len(adjusted)>=200 else None})
@@ -228,11 +229,11 @@ def build_pattern_input(root, approved_tickers=None):
         shards=[immutable(root,'metadata',f'pattern-approved-{i//250}',{'stocks':selected[i:i+250]}) for i in range(0,len(selected),250)]
         manifest['patternInputApproved']=immutable(root,'metadata','pattern-approved-input',{'dataSource':source,'total':len(selected),'tickers':[s['ticker'] for s in selected],'shards':shards})
     cal_sessions=[day for day,_ in manifest.get('calendar',[])]
-    v7_2=compute_v7_2_weekly({s['ticker']:s['rows'] for s in stocks},cal_sessions,manifest['session'],manifest.get('updatedAt',''))
+    v7_2=compute_v7_2_weekly(v7_histories,cal_sessions,manifest['session'],manifest.get('updatedAt',''))
     if v7_2 is not None:
         manifest['v7_2Weekly']=immutable(root,'metadata','v7-2-weekly',v7_2)
     save(root/'manifest.json',manifest)
-    print(f'Pattern input: {len(stocks)} stocks' + (f", V7.2 candidates: {len(v7_2['candidates'])} ({v7_2['asOfDate']})" if v7_2 else ''),flush=True)
+    print(f'Pattern input: {len(stocks)} stocks' + (f", V7.2 candidates: {len(v7_2['candidates'])} ({v7_2['asOfDate']}), weeks: {len(v7_2.get('weeks',[]))}" if v7_2 else ''),flush=True)
 
 
 def restore_earnings(root,snapshot):
@@ -356,7 +357,8 @@ def main():
             earn_res=restore_earnings(root,json.loads(Path(args.earnings).read_bytes()));print(json.dumps(earn_res),flush=True)
             if earn_res['earningsStocksUpdated']:changed=True
         manifest=json.loads((root/'manifest.json').read_bytes())
-        need_v7_2=not manifest.get('v7_2Weekly') or 'stopLossPct' not in unpacked(root/manifest['v7_2Weekly']['path'])
+        v7_existing=unpacked(root/manifest['v7_2Weekly']['path']) if manifest.get('v7_2Weekly') else {}
+        need_v7_2=not v7_existing or 'stopLossPct' not in v7_existing or 'weeks' not in v7_existing
         if args.pattern_tickers and (changed or not manifest.get('patternInputApproved') or need_v7_2):build_pattern_input(root,json.loads(Path(args.pattern_tickers).read_bytes()))
         elif changed or need_v7_2:build_pattern_input(root)
         print(json.dumps(refresh_live(root,provider,json.loads(Path(args.allowlist).read_bytes()),now)),flush=True)
