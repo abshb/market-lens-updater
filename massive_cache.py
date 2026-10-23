@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
+from v7_2_weekly import compute_v7_2_weekly
 
 TICKER = re.compile(r'^[A-Za-z0-9.^-]{1,24}$')
 REQUIRED = ['time','open','high','low','close','volume']
@@ -226,8 +227,12 @@ def build_pattern_input(root, approved_tickers=None):
         selected=[s for s in stocks if s['ticker'] in approved]
         shards=[immutable(root,'metadata',f'pattern-approved-{i//250}',{'stocks':selected[i:i+250]}) for i in range(0,len(selected),250)]
         manifest['patternInputApproved']=immutable(root,'metadata','pattern-approved-input',{'dataSource':source,'total':len(selected),'tickers':[s['ticker'] for s in selected],'shards':shards})
+    cal_sessions=[day for day,_ in manifest.get('calendar',[])]
+    v7_2=compute_v7_2_weekly({s['ticker']:s['rows'] for s in stocks},cal_sessions,manifest['session'],manifest.get('updatedAt',''))
+    if v7_2 is not None:
+        manifest['v7_2Weekly']=immutable(root,'metadata','v7-2-weekly',v7_2)
     save(root/'manifest.json',manifest)
-    print(f'Pattern input: {len(stocks)} stocks',flush=True)
+    print(f'Pattern input: {len(stocks)} stocks' + (f", V7.2 candidates: {len(v7_2['candidates'])} ({v7_2['asOfDate']})" if v7_2 else ''),flush=True)
 
 
 def restore_earnings(root,snapshot):
@@ -282,6 +287,8 @@ def snapshot_references(root,manifest):
         if manifest.get(key):
             pointer=manifest[key];references.add(pointer['path'])
             references.update(p['path'] for p in unpacked(root/pointer['path'])['shards'])
+    if manifest.get('v7_2Weekly'):
+        references.add(manifest['v7_2Weekly']['path'])
     return references
 
 
@@ -345,9 +352,13 @@ def main():
             manifest=json.loads((root/'manifest.json').read_bytes())
         latest=max(day for day,close in calendar if close/1000<=now.timestamp()-1800)
         if args.force_daily or latest>manifest['session'] or manifest.get('lastDailyCheck')!=now.date().isoformat():print(json.dumps(refresh_daily(root,provider,now)),flush=True);changed=True
-        if args.pattern_tickers and (changed or not manifest.get('patternInputApproved')):build_pattern_input(root,json.loads(Path(args.pattern_tickers).read_bytes()))
-        elif changed:build_pattern_input(root)
-        if args.earnings:print(json.dumps(restore_earnings(root,json.loads(Path(args.earnings).read_bytes()))),flush=True)
+        if args.earnings:
+            earn_res=restore_earnings(root,json.loads(Path(args.earnings).read_bytes()));print(json.dumps(earn_res),flush=True)
+            if earn_res['earningsStocksUpdated']:changed=True
+        manifest=json.loads((root/'manifest.json').read_bytes())
+        need_v7_2=not manifest.get('v7_2Weekly')
+        if args.pattern_tickers and (changed or not manifest.get('patternInputApproved') or need_v7_2):build_pattern_input(root,json.loads(Path(args.pattern_tickers).read_bytes()))
+        elif changed or need_v7_2:build_pattern_input(root)
         print(json.dumps(refresh_live(root,provider,json.loads(Path(args.allowlist).read_bytes()),now)),flush=True)
         if args.maintenance:print(json.dumps(prune_cache(root,now)),flush=True)
         current=json.loads((root/'manifest.json').read_bytes())

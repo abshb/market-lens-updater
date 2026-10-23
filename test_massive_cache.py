@@ -98,4 +98,24 @@ class Tests(unittest.TestCase):
         self.assertEqual(json.loads((target/'manifest.json').read_bytes())['invalidRowsSkipped'],1)
     def test_invalid_rows(self):
         for row in [[],None,['2026-10-08',0,12,10,11,100],['2026-10-08',11,9,10,11,100],['2026-10-08',11,12,10,11,-1]]:self.assertFalse(c.valid(row))
+    def test_v7_2_weekly_publication_and_retention(self):
+        from datetime import date,timedelta
+        days=[];d=date(2025,9,1)
+        while len(days)<252:
+            if d.weekday()<5:days.append(d.isoformat())
+            d+=timedelta(days=1)
+        idx={};tickers=['SPY','XLK','NUE','DK']
+        for k,t in enumerate(tickers):
+            rows=[[day,50+i*0.3+k,51+i*0.3+k,49+i*0.3+k,50.5+i*0.3+k,500_000] for i,day in enumerate(days)]
+            base=c.immutable(self.root,'history',t,{'ticker':t,'rows':rows})
+            idx.setdefault(c.shard(t),{})[t]={'base':base,'baseEnd':days[-1],'revision':base['sha256'],'splits':[],'lastDate':days[-1]}
+        cal=[[day,0] for day in days]
+        c.publish_manifest(self.root,{'schema':1,'provider':'github','session':days[-1],'calendar':cal,'tickers':tickers,'liveStocks':[]},idx)
+        c.build_pattern_input(self.root,['NUE'])
+        m=json.loads((self.root/'manifest.json').read_bytes())
+        self.assertIn('v7_2Weekly',m)
+        payload=c.unpacked(self.root/m['v7_2Weekly']['path'])
+        self.assertEqual(payload['schema'],1);self.assertEqual(payload['latestBundleDate'],days[-1])
+        c.prune_cache(self.root,NOW+c.timedelta(days=10))
+        self.assertTrue((self.root/m['v7_2Weekly']['path']).exists())
 if __name__=='__main__':unittest.main()
