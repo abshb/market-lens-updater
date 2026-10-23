@@ -115,7 +115,7 @@ class Tests(unittest.TestCase):
         m=json.loads((self.root/'manifest.json').read_bytes())
         self.assertIn('v7_2Weekly',m)
         payload=c.unpacked(self.root/m['v7_2Weekly']['path'])
-        self.assertEqual(payload['schema'],1);self.assertEqual(payload['latestBundleDate'],days[-1])
+        self.assertEqual(payload['schema'],1);self.assertEqual(payload['latestBundleDate'],days[-1]);self.assertEqual(payload['stopLossPct'],12.0)
         c.prune_cache(self.root,NOW+c.timedelta(days=10))
         self.assertTrue((self.root/m['v7_2Weekly']['path']).exists())
 if __name__=='__main__':unittest.main()

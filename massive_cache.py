@@ -356,7 +356,7 @@ def main():
             earn_res=restore_earnings(root,json.loads(Path(args.earnings).read_bytes()));print(json.dumps(earn_res),flush=True)
             if earn_res['earningsStocksUpdated']:changed=True
         manifest=json.loads((root/'manifest.json').read_bytes())
-        need_v7_2=not manifest.get('v7_2Weekly')
+        need_v7_2=not manifest.get('v7_2Weekly') or 'stopLossPct' not in unpacked(root/manifest['v7_2Weekly']['path'])
         if args.pattern_tickers and (changed or not manifest.get('patternInputApproved') or need_v7_2):build_pattern_input(root,json.loads(Path(args.pattern_tickers).read_bytes()))
         elif changed or need_v7_2:build_pattern_input(root)
         print(json.dumps(refresh_live(root,provider,json.loads(Path(args.allowlist).read_bytes()),now)),flush=True)

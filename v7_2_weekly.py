@@ -479,6 +479,7 @@ def compute_v7_2_weekly(
         entry_date = week_end_date
         planned_sell_date = week_end_date
 
+    stop_loss_pct = 12.0
     candidates: list[dict] = []
     for idx, r in enumerate(distinct_ranked[:top_limit]):
         ch = trend_channel_summary(r['rows20'])
@@ -489,6 +490,8 @@ def compute_v7_2_weekly(
         fit_pct = float(f'{raw_fit:.1f}')
         ch_pct = float(f'{ch[1]:.1f}')
         score_disp = float(f"{r['score'] * 100.0:.3f}")
+        close_val = round(float(r['close']), 4)
+        est_stop = round(close_val * (1.0 - stop_loss_pct / 100.0), 2)
         rank = len(candidates) + 1
         candidates.append({
             'ticker': r['ticker'],
@@ -497,7 +500,9 @@ def compute_v7_2_weekly(
             'overallRank': overall_rank,
             'totalRanked': total_ranked,
             'fitPct': fit_pct,
-            'close': round(float(r['close']), 4),
+            'close': close_val,
+            'stopLossPct': stop_loss_pct,
+            'estStopPrice': est_stop,
             'channelChangePct': ch_pct,
             'score': score_disp,
             'bestSectorEtf': r['bestSectorEtf'],
@@ -505,13 +510,15 @@ def compute_v7_2_weekly(
             'plannedSellDate': planned_sell_date,
             'reason': (
                 f"V7.2 Weekly Top-30; Fit {fit_pct:.1f}%; Score {score_disp:.3f}; "
-                f"Rank #{overall_rank}/{total_ranked} ({r['exchange']}); 15–20d uptrend +{ch_pct:.1f}%"
+                f"Rank #{overall_rank}/{total_ranked} ({r['exchange']}); 15–20d uptrend +{ch_pct:.1f}%; "
+                f"Hard stop -{int(stop_loss_pct)}%"
             ),
         })
 
     return {
         'schema': 1,
         'model': 'v7.2-weekly-top30',
+        'stopLossPct': stop_loss_pct,
         'dataSource': {
             'provider': 'github',
             'session': latest_bundle_date,
