@@ -121,4 +121,27 @@ class Tests(unittest.TestCase):
         self.assertGreater(payload['weeks'][0]['asOfDate'],payload['weeks'][1]['asOfDate'])
         c.prune_cache(self.root,NOW+c.timedelta(days=10))
         self.assertTrue((self.root/m['v7_2Weekly']['path']).exists())
+    def test_v7_2_weekly_friday_locked_midweek(self):
+        from datetime import date,timedelta
+        from v7_2_weekly import compute_v7_2_weekly
+        days=[];d=date(2025,1,2)
+        while len(days)<310:
+            if d.weekday()<5:days.append(d.isoformat())
+            d+=timedelta(days=1)
+        fri_idx=max(i for i,s in enumerate(days[:-4]) if date.fromisoformat(s).weekday()==4)
+        fri_days=days[:fri_idx+1];thu_days=days[:fri_idx+5]
+        def mk(ds):
+            out={}
+            for k,t in enumerate(['SPY','XLK','NUE','DK']):
+                rows=[]
+                for i,day in enumerate(ds):
+                    spike=12.0 if (t=='NUE' and i==fri_idx+1-252) else 0.0
+                    p=60+i*0.25+k+spike
+                    rows.append([day,p-0.3,p+0.8,p-0.8,p,600_000])
+                out[t]=rows
+            return out
+        on_fri=compute_v7_2_weekly(mk(fri_days),days,fri_days[-1],'t0',history_weeks=3)
+        on_thu=compute_v7_2_weekly(mk(thu_days),days,thu_days[-1],'t1',history_weeks=3)
+        self.assertEqual(on_fri['asOfDate'],on_thu['asOfDate'])
+        self.assertEqual([(x['ticker'],x['overallRank'],x['score']) for x in on_fri['candidates']],[(x['ticker'],x['overallRank'],x['score']) for x in on_thu['candidates']])
 if __name__=='__main__':unittest.main()

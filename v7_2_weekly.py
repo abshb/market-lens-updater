@@ -510,8 +510,8 @@ def compute_v7_2_weekly(
     weeks_out: list[dict] = []
 
     for week_pos, end_idx in enumerate(week_end_indices):
-        # Preserve exact window on current week (`spy_all[-252:]` snapped to Friday) and 252-bar windows on prior weeks
-        start_idx = max(0, (m_len - 252) if week_pos == 0 else (end_idx + 1 - 252))
+        # Anchor every week's 252-bar window strictly to its Friday `end_idx` so completed weeks never shift mid-week
+        start_idx = max(0, end_idx + 1 - 252)
         spy_len = end_idx - start_idx + 1
         if spy_len < 241:
             continue
